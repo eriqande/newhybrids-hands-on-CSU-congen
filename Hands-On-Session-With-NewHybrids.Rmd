@@ -1,0 +1,292 @@
+---
+title: "Hands On Session With NewHybrids"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Make You have the data
+
+Marina has posted a folder of data.  That folder (and its contents)
+should be saved to a directory called `data` in your current
+working directory in R.
+
+## Let's Investigate the Data
+
+Johanna provided the data in "Variant Call Format."  This is a standard
+format for genotypes derived from sequencing data.  If you have never looked
+at a VCF file before, it is worth doing.  We can do that on the Unix/Linux terminal
+like this:
+```sh
+gzip -cd  data/HZ_ybch_diff95.vcf.gz  | less -S
+```
+You can get out of the `less` viewer by hitting the `q` key.  
+
+We can talk about this format---it can be daunting at first.
+
+
+## Let us write some tools to get the data into NewHybrids format
+
+There are a number of wonderful tools for manipulating VCF files on the Unix
+command line (like `bcftools`); however, we can also use R, with the package
+'vcfR' to manipulate the data into shape for NewHybrids.  People here are probably
+more familiar with R that with bcftools, so we will use R.
+
+For a quick heads up on where we are going, we want to get the data into the format
+that NewHybrids uses, which is described in [the newhybrids manual](https://github.com/eriqande/newhybrids/blob/master/new_hybs_doc1_1Beta3.pdf),
+and which looks like this:
+```
+NumIndivs 79 
+NumLoci 49
+Digits 1
+Format Lumped
+
+LocusNames  sAAT1 sAAT2 sAAT3 ADA1 ADA2 ADH mAH1 mAH3 sAH mAAT1 CKA1 CKB FH
+			bGLUA bGALA GDA2 G3PDH1 GPIB2 GPIA GR mIDHP1 mIDHP2 sIDHP2 LDHA1 LDHA2 LDHB1
+			LDHB2 LDHC PEPB1 PEPLT sMDHA1 sMDHA2 sMDHB1 sMDHB2 sMEP2 mMEP1 MPI NTP PGDH
+			PGK1 PGK2 PGM2 PEPD1 IDDH1 sSOD1 TPI1 TPI2 TPI4 TPI3
+
+1   11  11  11  0  11  11  11  11  11  11  11  11  11  32  11  11  21  11  11  11  11 
+			 11  21  11  11  13  11  11  11  21  11  11  11  11  11  11  11  11  11  11  11 
+			 11  11  11  11  11  11  11  11 
+2   21  11  21  11  11  12  11  11  12  11  11  11  0  11  11  11  12  11  12  11  11 
+			 11  11  11  11  11  12  11  11  22  11  11  11  11  11  11  11  11  11  11  11 
+			 11  11  11  11  11  11  11  11 
+3   11  11  21  12  11  21  11  11  11  11  11  11  11  22  11  11  31  11  11  11  11 
+			 11  11  11  11  33  22  11  11  21  11  11  11  11  11  11  11  11  11  11  11 
+```
+
+So, we will get the data in an R data frame (a tidy tibble!) which we can manipulate
+how we want and then we will have a function to punch out the data set in the above format.
+
+Notice that missing data is denoted by a 0.
+
+### Get the data into a tidy tibble
+
+So, we will get all the data a format that has columns:
+`chrom`, `pos`, `indiv`, `geno`, where the `geno` column
+is 11 for `0/0` (i.e. the reference homozygote), 22 for `1/1`,
+and either 12 or 21 for `0/1`, or `1/0`, respectively.  And
+0 for a missing genotype.  
+
+Here is a function that does that
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(vcfR)
+
+#' Read a VCF file into a long-format tibble that will be easy to make into a newhybrids input
+#' @param vcf_path the path to the VCF file
+vcf2nh_tidy <- function(vcf_path) {
+  v <- read.vcfR(vcf_path, verbose = FALSE)
+  vt <- vcfR2tidy(v)
+  ck <- vt$fix %>%
+    distinct(ChromKey, CHROM)
+  vt$gt %>%
+    left_join(ck, by = join_by(ChromKey)) %>%
+    rename(chrom = CHROM, pos = POS, indiv = Indiv, gt = gt_GT) %>%
+    select(chrom, pos, indiv, gt) %>%
+    mutate(
+      geno = case_when(
+        is.na(gt) ~ "0",
+        gt == "0/0" ~ "11",
+        gt == "1/1" ~ "22",
+        gt == "0/1" | gt == "1/0" ~ "12",
+        TRUE ~ "PROBLEM!!"
+      )
+    ) %>%
+    select(-gt)
+}
+```
+
+
+And we can use it to read in the two data sets that Johanna has: the HZ one, which
+is focused on the hybrid zone birds, and the "all" one which has them all.
+```{r, message=FALSE}
+all_long <- vcf2nh_tidy("data/all_ybch_diff85.vcf.gz")
+hz_long <- vcf2nh_tidy("data/HZ_ybch_diff95.vcf.gz")
+```
+
+
+### Look over these samples and order them appropriately
+
+We have individual sample names in these that look like:
+```{r}
+unique(all_long$indiv) %>% head()
+```
+
+and
+```{r}
+unique(hz_long$indiv) %>% head()
+```
+
+In order to view the results in an intuitive way, it will be nice to
+arrange these birds in an order where all the putatively pure birds are together
+and the putative hybrids are also near one another in the data set. We can learn
+which birds are which from the "popmap" files for each of them.  These files
+look like:
+
+###### popmap_allybch.csv
+
+```{r, message=FALSE, warning=FALSE}
+popmap_all <- read_csv("data/popmap_allybch.csv")
+popmap_all
+```
+
+###### popmap_hz.csv
+
+```{r, message=FALSE, warning=FALSE}
+popmap_hz <- read_csv("data/popmap_hz.csv")
+popmap_hz
+```
+
+It appears that the `sample` column in both cases gives the sample names that are used
+in the VCF files. 
+
+
+### A function to write the NewHybrids file
+
+We now have the ingredients we need to write samples to a NewHybrids file, sorted
+in a way that makes sense.  One of the silly things about NewHybrids is that the
+input file takes a sample number (in order from 1, 2, 3,...), rather than a sample
+name, so we will also want to write out a file that gives the index/number that
+corresponds to each sample.  
+
+Let's write a function to do this, so that we can use it over again, as needed.
+```{r}
+#' Write out a newhybrids file
+#' 
+#' @param ordered_samples  a tibble with a column `sample` that are in the order
+#' you want individuals to appear in the newhybrids file. Note that if you want to
+#' remove individuals, you just make sure they do not appear in `ordered_samples`
+#' @param nh_tidy a tibble that is like the output of `vcf2nh_tidy()`.  All samples
+#' requested in `ordered_samples` must appear in the `indiv` column.  If there is a
+#' column `ZS` in nh_tidy, then its contents will for the z and s options string for
+#' each row.
+#' @param outpath  the path to the newhybrids output file to write.  New directories will
+#' be created as needed and the file giving index/number corresonding to each
+#' sample will be written out as `outpath + _sample_index`.
+#' @output This is called for its side effect of writing two files that can be
+#' used in NewHybrids.
+write_nh <- function(ordered_samples, nh_tidy, outpath) {
+  levs <- ordered_samples$sample
+  
+  if("ZS" %in% names(ordered_samples)) {
+    os <- ordered_samples %>%
+      select(sample, ZS)
+  } else {
+    os = ordered_samples %>%
+      select(sample)
+  }
+  wide <- os %>%
+    left_join(nh_tidy, by = join_by(sample == indiv)) %>%
+    mutate(
+      chrompos = str_c(chrom, ":", pos)
+    ) %>%
+    select(-chrom, -pos) %>%
+    pivot_wider(
+      names_from = chrompos,
+      values_from = geno
+    ) %>%
+    mutate(idx = 1:n(), .before = sample)
+  
+  # write that out
+  dn <- dirname(outpath)
+  if(dn != ".") {
+    dir.create(dn, showWarnings = FALSE, recursive = TRUE)
+  }
+  outNH <- outpath
+  outIDX <- str_c(outpath, "_sample_index")
+  
+  Locus_vec <- names(wide) %>%
+    setdiff(c("idx", "ZS", "sample"))
+  
+  # put the preamble/header stuff in the file
+  cat(
+    "NumIndivs ", nrow(wide),
+    "\nNumLoci ", length(Locus_vec),
+    "\nDigits 1\nFormat Lumped",
+    "\n\n",
+    "LocusNames ", paste(Locus_vec, sep = " ", collapse = " "),
+    "\n\n",
+    file = outNH,
+    sep = ""
+  )
+  
+  # write the data themselves
+  wide %>%
+    select(-sample) %>%
+    write_tsv(outNH, col_names = FALSE, append = TRUE)
+  
+  # then write the indices
+  wide %>%
+    select(idx, sample) %>%
+    write_tsv(file = outIDX)
+}
+```
+
+
+## Running NewHybrids
+
+Now we can make input files for NewHybrids and run it.
+
+### No "prior" information
+
+First, we throw all the individuals into the analysis without giving newhybrids
+any hints about who is "pure" and who is from from the hybrid zone, etc. 
+
+We will make each data set in its
+own directory.  These are "vanilla" runs because we are not using any information
+about pure and likely hybrid birds.
+```{r}
+popmap_all %>%
+  arrange(desc(pop1)) %>%
+  write_nh(all_long, "results/all/vanilla/dat.txt")
+
+popmap_hz %>%
+  arrange(desc(pop1)) %>%
+  write_nh(all_long, "results/hz/vanilla/dat.txt")
+```
+
+And now we can run those.
+
+
+With many loci and not many samples, NewHybrids does not converge to the right part
+of the space and nearly everyone is inferred to be an F2!  Looking at the data,
+there is clear structure, it's just that the MCMC doesn't get there.
+
+### Pre-assign birds to different pure categories based on structure results
+
+By giving NewHybrids a few hints about who is an eastern and who is a western
+bird, the Markov chain converges quite quickly to a reasonable looking part of the
+space.  This is done by setting the Z option for each individual.
+
+We can set the Z for individuals with an admixture fraction >0.999 or less than <0.0002,
+and see what happens then.
+```{r}
+popmap_all %>%
+  arrange(desc(pop1)) %>%
+  mutate(
+    ZS = case_when(
+      pop1 > 0.999 ~ "z0",
+      pop1 < 0.0002 ~ "z1",
+      TRUE ~ ""
+    )
+  ) %>%
+  write_nh(all_long, "results/all/a_few_Zs/dat.txt")
+```
+
+### Running newhybrids
+
+This has to be done in the terminal.  
+
+After running that and looking at the results, we have what appears to
+be some contamination, maybe.  Suspect individuals are:
+```{r}
+contam_suspects <- c(20, 23, 24, 39)
+```
+We will want to kick them out.
+
+Also let us apply the s option to only the ones in the hybrid zone.  
