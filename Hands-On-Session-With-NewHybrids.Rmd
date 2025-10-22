@@ -8,11 +8,64 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
+## Working Directory
+
+I want everyone to do this work in a directory on your computer.  You can put
+that wherever is appropriate for your file system.  When you are running R,
+that directory should be your working directory.  When you are running things
+on the command line, your working directory should be that directory. I will
+refer to it as "your working directory."
+
+
 ## Make You have the data
 
-Marina has posted a folder of data.  That folder (and its contents)
-should be saved to a directory called `data` in your current
-working directory in R.
+Marina has posted four data files of Canvas.  You should download those files
+and put them inside a directory called `data` in your working directory.
+
+## Getting NewHybrids 
+
+We are going to be making heavy use of the data visualization capabilities in
+newhybrids.  These are reliable only on Macs.  So, if you have a PC (or if you
+are not super comfortable on the Unix command line) partner up with someone who
+has a Mac (and is maybe more comfortable on the Unix command line).
+
+You are going to download newhybrids by navigating to the page on GitHub that
+has the executable:
+
+[https://github.com/eriqande/newhybrids/blob/master/bin/OSX/newhybs](https://github.com/eriqande/newhybrids/blob/master/bin/OSX/newhybs)
+
+and clicking the download button. (Picture on PowerPoint).
+
+1. Once it is downloaded move it to your working directory.  
+2. Then navigate to your working directory on the Unix command line (i.e., using Terminal
+or iTerm on your Mac)
+3. Make it executable by doing this Unix command:
+```sh
+chmod u+x newhybs
+```
+4. Then try running it to get the help information:
+```sh
+./newhybs --help
+```
+
+At this juncture, your Mac will scream at you because this software did not come
+from a "trusted" source. So:
+
+1. Click Cancel
+2. Go to Apple Menu -> System Settings...
+3. Type `security` in the searchbox and click on `Security Settings`
+4. Where it tells you newhybs was blocked, click `Allow Anyway` and
+enter your administrator credentials.
+
+Now go back to the unix command line and type:
+```
+./newhybs --help
+```
+once more.  This time you probably have to convince your Mac one more time that
+you really want to do this.  It will pop up a notice that the developer cannot be
+verified.  Simply click, "Open", and then you should be good to go.
+
+
 
 ## Let's Investigate the Data
 
@@ -181,7 +234,7 @@ write_nh <- function(ordered_samples, nh_tidy, outpath) {
       select(sample)
   }
   wide <- os %>%
-    left_join(nh_tidy, by = join_by(sample == indiv)) %>%
+    inner_join(nh_tidy, by = join_by(sample == indiv)) %>%  # use inner join to drop birds that were chucked due to missing data...
     mutate(
       chrompos = str_c(chrom, ":", pos)
     ) %>%
@@ -239,7 +292,8 @@ any hints about who is "pure" and who is from from the hybrid zone, etc.
 
 We will make each data set in its
 own directory.  These are "vanilla" runs because we are not using any information
-about pure and likely hybrid birds.
+about pure and likely hybrid birds.  We will focus on the data set with "all" the birds,
+but we can make the other. 
 ```{r}
 popmap_all %>%
   arrange(desc(pop1)) %>%
@@ -250,11 +304,29 @@ popmap_hz %>%
   write_nh(all_long, "results/hz/vanilla/dat.txt")
 ```
 
-And now we can run those.
+And now we can run those.  From the working directory on the Unix terminal we
+will change directories into `results/all/vanilla` and tell it to run newhybs
+on the data set.
+```sh
+cd results/all/vanilla/
+../../../newhybs -d dat.txt
+```
+When that starts, it launches the "Info" window.  If the predefined views have been
+installed correctly, then hitting the `1` key should open a lot of other windows.
 
+A few useful gfmcmc commands:
 
-With many loci and not many samples, NewHybrids does not converge to the right part
-of the space and nearly everyone is inferred to be an F2!  Looking at the data,
+- `Space Bar`: Start or stop the MCMC simulation
+- `/`: make the current window full size (or return to its original size)
+- `S`: start the MCMC again from a random starting point
+- `E`: restart the running averages from the current state
+- `X`: close all windows except the info window (helps to make things run faster)
+- `W`: close the selected window
+- `Drag-Box Zoom`:  shift-click and drag a white box. Hit `z` to zoom to it.
+  Hit `v` to zoom back out to default fit.  
+
+With many loci and not many samples, NewHybrids does not necessarily converge to the right part
+of the space. Sometimes nearly everyone is inferred to be an F2!  Looking at the data,
 there is clear structure, it's just that the MCMC doesn't get there.
 
 ### Pre-assign birds to different pure categories based on structure results
@@ -278,15 +350,292 @@ popmap_all %>%
   write_nh(all_long, "results/all/a_few_Zs/dat.txt")
 ```
 
-### Running newhybrids
+Then run change to that directory and run newhybs there.
 
-This has to be done in the terminal.  
+#### What do we find?
 
-After running that and looking at the results, we have what appears to
-be some contamination, maybe.  Suspect individuals are:
+- The alleles get separated into two different groups along the lines of the
+two groups of birds
+- However, there are a lot of Backcrosses in the red group.
+- Instability across runs.  I had one run that made it pretty clear that 
+some individuals looked like candidates for being contaminated.  They
+were:
 ```{r}
 contam_suspects <- c(20, 23, 24, 39)
 ```
-We will want to kick them out.
+They had a lot of missing data, too.
 
-Also let us apply the s option to only the ones in the hybrid zone.  
+
+## What is going on here?
+
+Two possibilities are:
+
+1. Birds with a lot of missing data are messing things up.
+2. The NewHybrids assumption that markers are not physically linked might be causing
+problems.  
+
+### Exploring Missing Data
+
+Let's look at the amount of missing data in the `all` data set.
+```{r}
+miss_fracts_all <- all_long %>%
+  group_by(indiv) %>%
+  summarise(fract_missing = mean(geno == "0"))
+
+ggplot(miss_fracts_all, aes(x = fract_missing)) +
+  geom_histogram()
+```
+
+OK, there are some birds with a lot of missing loci.  With RAD-seq, that typically means
+low coverage in those birds, so genotype calls are less reliable in those birds and they
+are also more prone to effects from contamination.  
+
+I propose dropping samples with >=9% missing loci.  Let's do that and re-run NewHybrids.
+```{r}
+all_lt9perc_missing <- all_long %>%
+  group_by(indiv) %>%
+  filter(mean(geno == "0") < 0.09)
+
+popmap_all %>%
+  arrange(desc(pop1)) %>%
+  mutate(
+    ZS = case_when(
+      pop1 > 0.999 ~ "z0",
+      pop1 < 0.0002 ~ "z1",
+      TRUE ~ ""
+    )
+  ) %>%
+  write_nh(all_lt9perc_missing, "results/all/lt9p_missing_someZs/dat.txt")
+```
+
+Then we run it.  
+
+When I ran it before I found two interesting things:
+
+1. Looking at the raw data, it is clear that the markers are not fixed.
+2. There might be clusters of markers that are not independent (likely)
+3. The Average origins of alleles make it clear that NewHybrids is willing
+to call pure birds pure birds, but the hybrids clearly have something different
+going on, but newhybrids can't pull them apart as hybrids.  There are a couple
+of possibilities for why that may be:
+    - The inclusion of so many pure individuals (that are outside of the hybrid
+      zone) have articially lowered the mixing proportion of hybrids.
+    - With so many markers (many of which are likely linked) the posterior probabilities
+      don't reflect uncertainty well and it is easy for the sampler to get caught in
+      a wrong part of the space, and yet not reflect the uncertainty that is really
+      there.
+
+
+It is interesting to ponder that if you throw a lot of markers into NewHybrids and
+tell it they are all unlinked, it might behave badly.  
+
+### Exploring the markers
+
+In looking at the data, it appeared that the markers (which were chosen to have
+large allele frequency differences between east and west) were clustered in only
+a few spots in the genome.  We can make a map of where those markers are relative
+to the chromosomes.
+
+The VCF file carries around information about the genome, including the lengths
+of the chromosomes.  So, let's extract that info:
+```{r}
+VCF_lines <- read_lines("data/all_ybch_diff85.vcf.gz")
+contigs <- tibble(
+  line = VCF_lines
+) %>%
+  filter(str_detect(line, "^##contig="))
+
+# there are 2110 such contigs.  Most of them are unmapped scaffolds.
+# let us just keep the chromosomes.
+chromos <- contigs %>%
+  filter(str_detect(line, "=chr"))
+```
+
+That has given us 31 chromosomes, and now we just need to extract their names
+and their lengths.  While we are at it, we will calculate the starting base pair
+cumulatively from the beginning of the genome, for each locus.
+```{r}
+chrom_lengths <- chromos %>%
+  extract(
+    line,
+    into = c("chrom", "length"),
+    regex = "^##contig=<ID=(.+),length=(.+)>$",
+    convert = TRUE
+  ) %>% 
+  mutate(
+    cumul_start = lag(cumsum(length), default = 0L) + 1,
+    cumul_mid = cumul_start + length / 2
+  )
+```
+
+Now, get the chromosomes and the positions of all the markers, and then
+compute their cumulative position in the genome.
+```{r}
+marker_cumul <- all_long %>%
+  distinct(chrom, pos) %>%
+  left_join(chrom_lengths, by = join_by(chrom)) %>%
+  mutate(marker_cumul_pos = cumul_start + pos)
+```
+
+Now we can plot the positions of the markers relative to the chromosome ends:
+```{r}
+ggplot() +
+  geom_point(data = marker_cumul, aes(x = marker_cumul_pos), y = 1, colour = "blue", size = 0.1) +
+  geom_vline(data = chrom_lengths, aes(xintercept = cumul_start))
+  
+```
+The black lines are the endpoints of chromosomes.  The blue dots are positions of
+the markers.  
+
+So, the markers are certainly clustered by chromosome.  It looks like there might be
+about 18 chromosomes or so, that the markers fall on.  
+
+In order to have a data set that we knew fit the newhybrids model, we would
+have just a single markers per chromosome.  Let's do that by taking the marker from each chromosome
+that has the least amount of missing data.  
+
+First calculate the fraction of missing data across loci:
+```{r}
+locus_miss_fracts <- all_long %>%
+  group_by(chrom, pos) %>%
+  summarise(miss_fract = mean(geno == "0")) %>%
+  ungroup() %>%
+  arrange()
+
+# let's look at that
+ggplot(locus_miss_fracts, aes(x = miss_fract)) +
+  geom_histogram()
+```
+
+So, that is an interesting pattern. Let's redo that count and only count in birds
+that have less than 9% missing data.
+```{r}
+locus_miss_fract_clean <- all_long %>%
+  group_by(indiv) %>%
+  filter(mean(geno == "0") < 0.09) %>%
+  group_by(chrom, pos) %>%
+  summarise(miss_fract = mean(geno == "0")) %>%
+  ungroup()
+
+ggplot(locus_miss_fract_clean, aes(x = miss_fract)) +
+  geom_histogram()
+```
+
+That looks much more reasonable.  Now, let's take let's filter out individuals and take the
+locus with the least missing data on each chromosome.  But let us also choose that locus
+from amongst the ones in hz_all, because those had larger inferred allele frequency differences
+between the two different populations of birds.
+```{r}
+locus_miss_fract_clean_hz <- locus_miss_fract_clean %>%
+  semi_join(hz_long, by = join_by(chrom, pos))
+```
+
+That is weird.  There is not much overlap there.  Perhaps the allele frequencies
+were estimated with structure and they vary quite a lot from run to run.  
+
+So, just use the all loci:
+```{r}
+lo_missing_26_loci <- locus_miss_fract_clean %>%
+  arrange(chrom, miss_fract) %>%
+  group_by(chrom) %>%
+  slice(1)
+lo_missing_26_loci
+```
+
+Now, ditch the messy individuals and keep only those 26 loci (one per chromosome).
+```{r}
+loci26 <- all_long %>%
+  group_by(indiv) %>%
+  filter(mean(geno == "0") < 0.09) %>%
+  ungroup() %>%
+  semi_join(lo_missing_26_loci, by = join_by(chrom, pos))
+```
+
+Then make some new data sets from that.
+
+First do one with no training data.
+```{r}
+popmap_all %>%
+  arrange(desc(pop1)) %>%
+  write_nh(loci26, "results/all/26loci/dat.txt")
+```
+
+And run it in newhybs.  That goes a lot faster....
+
+OK! When we run that in newhybs we see that sometimes the MCMC does not converge
+to a good part of the space, but by doing multiple random restarts (`S` key) we sometimes
+find that it converges to a state that makes sense.
+
+With those markers, one ends up with some evidence of F2s and backcrosses in one direction
+amongst the hybrid birds.  Keeping in mind that F2 is a catch-all category of "bird that
+with ancestry that involves backcrossing in both directions." 
+
+**DISCUSSION TOPIC**:  What is this telling us about putting big blocks of linked markers
+into analyses that expect/assume unlinked markers?
+
+### Rerun that while estimating mixing proportions only for the hybrid zone birds
+
+There are 5 birds in the data set that are from the hybrid zone.  They all look to
+be non-pure birds.  But the way we ran the last run, newhybrids is calculating the
+mixing proportions (of genotype categories) using all the birds in the data set.
+Because there are so many birds from outside the hybrid zone, that are known to be
+pure-ish, this is going to make the program expect _a priori_ that most the birds in
+the hybrid zone will be pure, too.  This is probably not warranted.  
+
+Instead, we can tell the program to estimate the mixing proportions just from the
+5 hybrid zone individuals.  We can do that like this by adding the `s` flag to the
+birds that should not be used to estimate the category frequencies. But, when we do this,
+we should also tell the program which population they belong to...otherwise they
+might be estimated to be hybrids, because they are not included in estimation of the
+mixing proportions.  Note that the hybrid zone birds
+are labeled `f1` in the `pop` column of the popmap.
+```{r}
+popmap_all %>%
+  arrange(desc(pop1)) %>%
+  mutate(
+    ZS = case_when(
+      pop == "p1" ~ "z0s", # z0 = call if from population 0. s = don't use it to calculate mixing proportions
+      pop == "f1" ~ "",
+      pop == "p2" ~ "z1s",
+      TRUE ~ "PROBLEM"
+    )
+  ) %>%
+  write_nh(loci26, "results/all/26loci_zs_options/dat.txt")
+```
+
+
+That is cool.  It is showing us that the "pure" birds, under this scenario where they
+are not used to estimate the mixing proprtions, would have a high posterior mean of
+being pure, but it jumps around.  Not a worry---their alleles all get divvied up according'
+to where they are said to be from via the z option.
+
+Another thing we could do is just fix the mixing proportions so that any bird is
+equally likely to be Pure0, Pure1, F1, F2, BX_0, or BX_1.  Then we will effectively be
+getting the likelihood of each bird belonging to any of the categories, given their
+genetic data.  We do that like this:
+```sh
+# in: results/all/26loci_zs_options
+ ../../../newhybs -d dat.txt  \
+    -g Pure0 1.0  0.0  0.0 \
+    -g Pure1 0.0  0.0  1.0 \
+    -g F1    0.0  0.5  0.0 \
+    -g F2    0.25 0.5 0.25 \
+    -g BX0   0.5  0.5  0.0 \
+    -g BX1   0.0  0.5  0.5 \
+    --pi-prior fixed  1 1 1 1 1 1
+```
+and you can read the output of `newhybs --help-full` to see why.
+
+That makes quite a bit of sense.  Though it would be worth
+doing that multiple times over, sampling a single locus from each chromosome
+and looking at the results. 
+
+## Multiple samplings of a single locus from each chromosome
+
+We can write a quick function to make resampled data sets where we
+are drawing a single locus from each chromosome. We will name the output
+files according to the random number seed used.  
+
+## Getting the actual results from NewHybrids
+
+You can also run newhybrids on the command line without the gui.
