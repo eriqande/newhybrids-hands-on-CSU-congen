@@ -65,8 +65,16 @@ once more.  This time you probably have to convince your Mac one more time that
 you really want to do this.  It will pop up a notice that the developer cannot be
 verified.  Simply click, "Open", and then you should be good to go.
 
+## Getting the Predefd  Views
 
+Go to
+[https://github.com/eriqande/newhybrids/blob/master/NewHybrids_PreDefdViews.txt](https://github.com/eriqande/newhybrids/blob/master/NewHybrids_PreDefdViews.txt) and download the file.
 
+Then do this at your unix terminal
+```sh
+ mkdir -p ~/Library/gfmcmc/
+ mv ~/Downloads/NewHybrids_PreDefdViews.txt ~/Library/gfmcmc/
+```
 ## Let's Investigate the Data
 
 Johanna provided the data in "Variant Call Format."  This is a standard
