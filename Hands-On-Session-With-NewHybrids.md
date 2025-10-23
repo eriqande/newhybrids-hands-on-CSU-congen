@@ -444,10 +444,11 @@ ggplot(miss_fracts_all, aes(x = fract_missing)) +
 
 ![](Hands-On-Session-With-NewHybrids_files/figure-gfm/unnamed-chunk-11-1.png)<!-- -->
 
-OK, there are some birds with a lot of missing loci. With RAD-seq, that
-typically means low coverage in those birds, so genotype calls are less
-reliable in those birds and they are also more prone to effects from
-contamination.
+OK, there are some birds with a lot of missing loci. Apparently this was
+from lcWGS. I don’t know how the calls were made. Not by beagle
+imputation. But at any rate, a lower call rate means low coverage in
+those birds, so genotype calls are less reliable in those birds and they
+are also more prone to effects from contamination.
 
 I propose dropping samples with \>=9% missing loci. Let’s do that and
 re-run NewHybrids.
@@ -710,7 +711,7 @@ the mixing proportions. Note that the hybrid zone birds are labeled `f1`
 in the `pop` column of the popmap.
 
 ``` r
-popmap_all %>%
+popmap_ZS <- popmap_all %>%
   arrange(desc(pop1)) %>%
   mutate(
     ZS = case_when(
@@ -719,8 +720,9 @@ popmap_all %>%
       pop == "p2" ~ "z1s",
       TRUE ~ "PROBLEM"
     )
-  ) %>%
-  write_nh(loci26, "results/all/26loci_zs_options/dat.txt")
+  ) 
+
+write_nh(popmap_ZS, loci26, "results/all/26loci_zs_options/dat.txt")
 ```
 
 That is cool. It is showing us that the “pure” birds, under this
@@ -739,7 +741,7 @@ any of the categories, given their genetic data. We do that like this:
  ../../../newhybs -d dat.txt  \
     -g Pure0 1.0  0.0  0.0 \
     -g Pure1 0.0  0.0  1.0 \
-    -g F1    0.0  0.5  0.0 \
+    -g F1    0.0  1.0  0.0 \
     -g F2    0.25 0.5 0.25 \
     -g BX0   0.5  0.5  0.0 \
     -g BX1   0.0  0.5  0.5 \
@@ -758,6 +760,57 @@ We can write a quick function to make resampled data sets where we are
 drawing a single locus from each chromosome. We will name the output
 files according to the random number seed used.
 
+``` r
+sample_one_SNP_per_chromosome <- function(popmap = popmap_ZS, nh_tidy = all_long, seed) {
+  # filter down to no more than 9% missing data amongst indivs
+  no_losers <- nh_tidy %>%
+    group_by(indiv) %>%
+    filter(mean(geno == "0") < 0.09) %>%
+    ungroup()
+  
+  # then, get a list of loci
+  loci <- no_losers %>%
+    distinct(chrom, pos)
+  
+  # sample one locus per chromsome
+  set.seed(seed)
+  selected_loci <- loci %>%
+    group_by(chrom) %>%
+    slice_sample(n = 1)
+  
+  # get the data set limited to only those loci
+  nh_slim <- no_losers %>%
+    semi_join(selected_loci, by = join_by(chrom, pos))
+  
+  # then write out the data set
+  write_nh(popmap, nh_slim, sprintf("results/all/one_SNP_per_chrom_seed_%03d/dat.txt", seed))
+  
+}
+```
+
+Then make some data sets:
+
+``` r
+for(i in 1:20) {
+  sample_one_SNP_per_chromosome(seed = i)
+}
+```
+
+Then you can quickly run each of those by changing into the appropriate
+directory and doing:
+
+``` sh
+../../../newhybs -d dat.txt      -g Pure0 1.0  0.0  0.0     -g Pure1 0.0  0.0  1.0     -g F1    0.0  1.0  0.0     -g F2    0.25 0.5 0.25     -g BX0   0.5  0.5  0.0     -g BX1   0.0  0.5  0.5     --pi-prior fixed  1 1 1 1 1 1
+```
+
 ## Getting the actual results from NewHybrids
 
-You can also run newhybrids on the command line without the gui.
+You can also run newhybrids on the command line without the gui:
+
+``` sh
+../../../newhybs -d dat.txt --no-gui --num-sweeps 20000 --burn-in 5000      -g Pure0 1.0  0.0  0.0     -g Pure1 0.0  0.0  1.0     -g F1    0.0  1.0  0.0     -g F2    0.25 0.5 0.25     -g BX0   0.5  0.5  0.0     -g BX1   0.0  0.5  0.5     --pi-prior fixed  1 1 1 1 1 1
+```
+
+And then the results you want would be in the file `aa-PofZ.txt`.
+
+We could set the name of each sample to be output into that file….
